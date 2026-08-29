@@ -12,6 +12,11 @@ __pycache__/
 .venv/
 venv/
 
+# Large video binaries (Hosted on YouTube / Local)
+*.mp4
+*.avi
+*.mov
+
 # Database (local instance)
 data/audit.db
 
