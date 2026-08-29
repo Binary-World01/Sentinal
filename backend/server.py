@@ -79,8 +79,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(n
 log = logging.getLogger("sentinel_server")
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
-DB_PATH = Path("data") / "audit.db"
+_frontend_override = os.environ.get("FRONTEND_DIR_OVERRIDE", "")
+FRONTEND_DIR = Path(_frontend_override) if _frontend_override else Path(__file__).parent.parent / "frontend"
+DB_PATH = Path(os.environ.get("DATA_DIR", "data")) / "audit.db"
+
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
