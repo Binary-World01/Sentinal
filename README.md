@@ -2,9 +2,22 @@
 
 > **RocketRide Buildathon** · AP Invoice Fraud Detection · Team of 4
 
+[![Live on Vercel](https://img.shields.io/badge/LIVE%20DEMO-ap--fraud--sentinel.vercel.app-brightgreen?style=for-the-badge&logo=vercel&logoColor=white)](https://ap-fraud-sentinel.vercel.app)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-Binary--World01%2FSentinal-181717?style=for-the-badge&logo=github)](https://github.com/Binary-World01/Sentinal)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Binary-World01/Sentinal)
+
+---
+
+> 🚀 **[▶ Open Live App → ap-fraud-sentinel.vercel.app](https://ap-fraud-sentinel.vercel.app)**
+>
+> API Health: [ap-fraud-sentinel.vercel.app/api/health](https://ap-fraud-sentinel.vercel.app/api/health)
+
+---
+
 Real-time AI fraud detection for mid-size AP finance teams. Detects **Business Email Compromise (BEC)**, fake bank-detail changes, account takeovers, duplicate invoices, and vendor impersonation — with a mandatory **Human-in-the-Loop** approval gate so no fraudulent payment is ever auto-released.
 
 ---
+
 
 ## 5-Line Quick Start
 
