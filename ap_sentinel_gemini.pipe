@@ -1,0 +1,90 @@
+{
+  "components": [
+    {
+      "id": "invoice_in",
+      "provider": "webhook",
+      "config": {
+        "laneName": "invoice_payload"
+      }
+    },
+    {
+      "id": "ocr_parser_agent",
+      "provider": "llm_openai",
+      "config": {
+        "model": "gemini-1.5-flash",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "system_prompt": "You are a Document OCR and Extraction Specialist for AP (Accounts Payable) fraud detection.\n\nYour job is to extract structured financial data from the incoming invoice or vendor update payload. The payload may be raw JSON, extracted PDF text, or email body text.\n\nExtract and return ONLY the following JSON object (no markdown, no explanation):\n{\n  \"vendor_name\": \"string\",\n  \"vendor_email\": \"string\",\n  \"sender_domain\": \"string\",\n  \"invoice_number\": \"string\",\n  \"invoice_amount\": 0,\n  \"currency\": \"string\",\n  \"bank_account_number\": \"string\",\n  \"routing_number\": \"string\",\n  \"iban\": \"string\",\n  \"swift_bic\": \"string\",\n  \"payment_due_date\": \"string\",\n  \"contact_phone\": \"string\",\n  \"billing_address\": \"string\",\n  \"line_items\": [],\n  \"urgency_language_detected\": false,\n  \"bank_change_request\": false,\n  \"executive_override_claimed\": false,\n  \"extraction_confidence\": 0.0\n}\n\nRules:\n- If a field is missing use null.\n- extraction_confidence: 0.0-1.0 based on completeness of document.\n- urgency_language_detected=true if phrases like 'urgent', 'immediately', 'wire today', 'CEO approval', 'confidential', 'do not discuss' appear.\n- bank_change_request=true if there is any request to change bank account, routing number, or payment destination.\n- executive_override_claimed=true if the message claims to be from a C-suite executive bypassing normal process."
+      },
+      "input": [
+        {
+          "lane": "invoice_payload",
+          "from": "invoice_in"
+        }
+      ]
+    },
+    {
+      "id": "vendor_registry_tool",
+      "provider": "tool",
+      "config": {
+        "tool_name": "query_vendor_master_record"
+      }
+    },
+    {
+      "id": "anomaly_delta_agent",
+      "provider": "llm_openai",
+      "config": {
+        "model": "gemini-1.5-flash",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "system_prompt": "You are an Anomaly Detection and Delta Analysis Agent for AP fraud prevention.\n\nYou will receive extracted invoice data and the vendor's historical master record.\n\nPerform these specific checks and output ONLY a JSON object (no markdown):\n{\n  \"bank_account_changed\": false,\n  \"routing_changed\": false,\n  \"iban_changed\": false,\n  \"sender_domain_matches_vendor\": true,\n  \"domain_typosquat_detected\": false,\n  \"typosquat_details\": null,\n  \"invoice_number_duplicate\": false,\n  \"invoice_amount_velocity_spike\": false,\n  \"amount_deviation_pct\": 0,\n  \"new_vendor_first_large_payment\": false,\n  \"payment_destination_country_new\": false,\n  \"contact_phone_changed\": false,\n  \"anomalies_detected\": [],\n  \"anomaly_severity\": \"none\"\n}\n\nRules:\n- domain_typosquat_detected: compare sender_domain vs vendor known domain — look for character substitutions (rn vs m, 0 vs o), extra subdomains, different TLDs (.co vs .com), inserted hyphens.\n- invoice_amount_velocity_spike: flag if current invoice is >150% of vendor average from history.\n- anomaly_severity values: none | low | medium | high | critical.\n- If no historical record exists, treat vendor as NEW and set new_vendor_first_large_payment=true if amount > 5000.\n- anomalies_detected: list each anomaly as a plain English string."
+      },
+      "input": [
+        {
+          "lane": "ocr_output",
+          "from": "ocr_parser_agent"
+        },
+        {
+          "lane": "registry_data",
+          "from": "vendor_registry_tool"
+        }
+      ],
+      "control": [
+        {
+          "invoke": "vendor_registry_tool"
+        }
+      ]
+    },
+    {
+      "id": "forensic_fraud_agent",
+      "provider": "llm_openai",
+      "config": {
+        "model": "gemini-1.5-flash",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "system_prompt": "You are a Forensic AP Fraud Auditor and final risk scorer.\n\nYou will receive extracted invoice data and anomaly analysis. Synthesize all signals into a final fraud verdict.\n\nOutput ONLY this JSON (no markdown, no explanation):\n{\n  \"risk_score\": 0.0,\n  \"risk_tier\": \"CLEAN\",\n  \"fraud_type\": null,\n  \"confidence\": 0.0,\n  \"key_risk_factors\": [],\n  \"recommendation\": \"AUTO_APPROVE\",\n  \"out_of_band_action\": null,\n  \"verified_vendor_phone\": null,\n  \"auto_approve_safe\": true,\n  \"hitl_required\": false,\n  \"audit_summary\": \"string\"\n}\n\nRisk scoring rules:\n- risk_score 0.00-0.25 → CLEAN, AUTO_APPROVE, hitl_required=false, auto_approve_safe=true\n- risk_score 0.26-0.60 → ELEVATED, SECONDARY_REVIEW, hitl_required=true, auto_approve_safe=false\n- risk_score 0.61-1.00 → HOLD, PAYMENT_HOLD, hitl_required=true, auto_approve_safe=false\n\nHigh-weight signals:\n- bank_account_changed AND urgency_language_detected = BEC pattern +0.35\n- domain_typosquat_detected +0.30\n- executive_override_claimed +0.25\n- bank_change_request AND new vendor +0.30\n\nMedium-weight signals:\n- invoice_amount_velocity_spike +0.15\n- contact_phone_changed +0.10\n- invoice_number_duplicate +0.20\n- payment_destination_country_new +0.15\n\nfraud_type values: null | BEC | ACCOUNT_TAKEOVER | DUPLICATE_INVOICE | VENDOR_IMPERSONATION | INTERNAL_FRAUD | SYNTHETIC_VENDOR\n\nout_of_band_action must say: 'Call vendor on verified number [phone] from master registry. DO NOT use any contact info from the suspicious document.'"
+      },
+      "input": [
+        {
+          "lane": "ocr_output",
+          "from": "ocr_parser_agent"
+        },
+        {
+          "lane": "anomaly_output",
+          "from": "anomaly_delta_agent"
+        }
+      ]
+    },
+    {
+      "id": "sentinel_response",
+      "provider": "response",
+      "config": {
+        "laneName": "fraud_verdict"
+      },
+      "input": [
+        {
+          "lane": "fraud_verdict",
+          "from": "forensic_fraud_agent"
+        }
+      ]
+    }
+  ],
+  "project_id": "e0d82172-0851-4671-aabd-ec6699a9667a"
+}

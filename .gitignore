@@ -1,0 +1,24 @@
+# Environment
+.env
+
+# Runtime pipe files (API keys injected — auto-generated at startup)
+ap_sentinel_runtime.pipe
+ap_sentinel_gemini_rt.pipe
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Database (local instance)
+data/audit.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.claude/

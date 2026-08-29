@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AP Fraud Sentinel — Real-Time AI Invoice Protection & Vendor Master</title>
+  <meta name="description" content="AI-Powered AP Invoice Fraud Detection powered by RocketRide Multi-Agent AI and Supabase Vendor Registry." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- Supabase JS v2 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════ HEADER ═══════════════════════════════ -->
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <path d="M14 2L26 8V20L14 26L2 20V8L14 2Z" stroke="url(#grad1)" stroke-width="1.5" fill="none"/>
+          <path d="M14 7L21 11V17L14 21L7 17V11L14 7Z" fill="url(#grad1)" opacity="0.3"/>
+          <circle cx="14" cy="14" r="3" fill="url(#grad1)"/>
+          <defs>
+            <linearGradient id="grad1" x1="2" y1="2" x2="26" y2="26">
+              <stop offset="0%" stop-color="#6366f1"/>
+              <stop offset="100%" stop-color="#ec4899"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <div>
+        <div class="logo-title">AP Fraud Sentinel <span class="badge-tag">v2.1</span></div>
+        <div class="logo-sub">Supabase Registry · RocketRide Multi-Agent AI</div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs" id="navTabs">
+      <button class="nav-tab active" data-tab="dashboard">
+        <span class="nav-tab-icon">📊</span>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-tab" data-tab="vendors">
+        <span class="nav-tab-icon">🏢</span>
+        <span>Vendor Registry</span>
+        <span class="tab-count-badge" id="navVendorCount">0</span>
+      </button>
+      <button class="nav-tab" data-tab="audit-single">
+        <span class="nav-tab-icon">📝</span>
+        <span>Audit Invoice</span>
+      </button>
+      <button class="nav-tab" data-tab="batch">
+        <span class="nav-tab-icon">📁</span>
+        <span>Batch Upload</span>
+      </button>
+      <button class="nav-tab" data-tab="hitl">
+        <span class="nav-tab-icon">🛡️</span>
+        <span>HITL Hold Desk</span>
+        <span class="tab-count-badge badge-red" id="navHitlCount" style="display:none">0</span>
+      </button>
+    </nav>
+
+    <!-- Header Right Controls -->
+    <div class="header-right">
+      <!-- Supabase Status Badge -->
+      <div class="supabase-badge" id="supabaseBadge" title="Supabase Database & Auth Status">
+        <span class="supabase-dot" id="supabaseDot"></span>
+        <span id="supabaseLabel">Supabase: Syncing</span>
+      </div>
+
+      <!-- Engine Badge -->
+      <div class="engine-badge" id="engineBadge" title="AI Fraud Detection Engine">
+        <span class="engine-dot" id="engineDot"></span>
+        <span id="engineLabel">AI Sentinel</span>
+      </div>
+
+      <!-- Recordings & Screenshots Preview Link -->
+      <a href="/preview" target="_blank" class="btn btn-ghost btn-sm" style="font-size:0.78rem; text-decoration:none;" title="View Walkthrough Recording and Screenshots">
+        🎬 Recordings
+      </a>
+
+      <!-- Settings Icon -->
+      <button class="icon-btn" id="settingsBtn" title="Supabase & Model Settings">
+        ⚙️
+      </button>
+
+      <!-- Auth User Profile / Login Button -->
+      <div class="user-auth-wrap" id="userAuthWrap">
+        <button class="btn btn-primary btn-sm" id="authModalBtn">🔐 Sign In</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════ MAIN CONTENT ═══════════════════════════════ -->
+<main class="main-container">
+
+  <!-- ════════════════════════ TAB 1: DASHBOARD ════════════════════════ -->
+  <section class="tab-pane active" id="tab-dashboard">
+    
+    <!-- Top Action Bar -->
+    <div class="dash-action-bar">
+      <div class="dash-action-left">
+        <h1 class="dash-heading">AP Security Operations Center</h1>
+        <p class="dash-sub">Real-time BEC detection, bank change interception & vendor master cross-checking.</p>
+      </div>
+      <div class="dash-action-right">
+        <button class="btn btn-outline" id="quickAuditBtn">⚡ Quick Audit Invoice</button>
+        <button class="btn btn-primary" id="openAddVendorTopBtn">+ Add New Vendor</button>
+      </div>
+    </div>
+
+    <!-- Telemetry Cards -->
+    <div class="telemetry-grid">
+      <div class="tcard tcard-blue">
+        <div class="tcard-icon">📋</div>
+        <div class="tcard-value" id="tTotal">0</div>
+        <div class="tcard-label">Invoices Audited</div>
+        <div class="tcard-sub" id="tProgress">System Ready</div>
+      </div>
+      <div class="tcard tcard-green">
+        <div class="tcard-icon">✅</div>
+        <div class="tcard-value" id="tClean">0</div>
+        <div class="tcard-label">Auto-Approved</div>
+        <div class="tcard-sub">Clean · ERP Routed</div>
+      </div>
+      <div class="tcard tcard-orange">
+        <div class="tcard-icon">⚠️</div>
+        <div class="tcard-value" id="tElevated">0</div>
+        <div class="tcard-label">Elevated Risk</div>
+        <div class="tcard-sub">Secondary Queue</div>
+      </div>
+      <div class="tcard tcard-red">
+        <div class="tcard-icon">🔴</div>
+        <div class="tcard-value" id="tHold">0</div>
+        <div class="tcard-label">Payment Holds</div>
+        <div class="tcard-sub">Frozen · HITL Required</div>
+      </div>
+      <div class="tcard tcard-purple">
+        <div class="tcard-icon">💰</div>
+        <div class="tcard-value" id="tFraud">$0</div>
+        <div class="tcard-label">Fraud Capital Intercepted</div>
+        <div class="tcard-sub">Protected AP Assets</div>
+      </div>
+      <div class="tcard tcard-indigo">
+        <div class="tcard-icon">🏢</div>
+        <div class="tcard-value" id="tVendors">0</div>
+        <div class="tcard-label">Verified Master Vendors</div>
+        <div class="tcard-sub">Supabase Registry</div>
+      </div>
+    </div>
+
+    <!-- Active Live Stream / Progress Bar -->
+    <div class="progress-bar-wrap" id="dashProgressWrap" style="display:none">
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+      </div>
+      <div class="progress-label" id="progressLabel">0 / 0</div>
+    </div>
+
+    <!-- Full Audit Log Table -->
+    <div class="card audit-table-card">
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <h2 class="card-title">🛡️ Real-Time Audit Log & Forensic Verdicts</h2>
+          <span class="badge" id="tableFilterBadge">All Invoices</span>
+        </div>
+        <div class="table-actions">
+          <div class="search-input-wrap">
+            <input type="text" class="input-search" id="auditSearchInput" placeholder="Filter by invoice ID, vendor, fraud type..." />
+          </div>
+          <select class="select-filter" id="riskFilterSelect">
+            <option value="ALL">All Risk Tiers</option>
+            <option value="HOLD">🔴 Payment Holds Only</option>
+            <option value="ELEVATED">⚠️ Elevated Risk Only</option>
+            <option value="CLEAN">✅ Clean / Approved Only</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="exportAuditBtn">⬇ Export JSON</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="results-table" id="resultsTable">
+          <thead>
+            <tr>
+              <th>Invoice ID</th>
+              <th>Vendor</th>
+              <th>Amount</th>
+              <th>Risk Score</th>
+              <th>Risk Tier</th>
+              <th>Fraud Type</th>
+              <th>Latency</th>
+              <th>Summary & Signals</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody">
+            <tr class="empty-row">
+              <td colspan="9">No invoices audited yet. Click "Audit Invoice" or "Batch Upload" to run real-time fraud detection.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Pipeline Visual Execution Trace -->
+    <div class="card trace-card">
+      <div class="card-header">
+        <h2 class="card-title">🔄 RocketRide 3-Agent Forensic Pipeline Architecture</h2>
+      </div>
+      <div class="pipeline-diagram">
+        <div class="pipe-node" id="pNode1">
+          <div class="pipe-node-icon">📥</div>
+          <div class="pipe-node-label">Invoice Ingestion</div>
+          <div class="pipe-node-sub">REST / Webhook Lane</div>
+          <div class="pipe-node-stat" id="pStat1">Ready</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node" id="pNode2">
+          <div class="pipe-node-icon">🔍</div>
+          <div class="pipe-node-label">Agent 1: OCR Parser</div>
+          <div class="pipe-node-sub">Extracts Banking & Urgency</div>
+          <div class="pipe-node-stat" id="pStat2">Standby</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node" id="pNode3">
+          <div class="pipe-node-icon">🗄️</div>
+          <div class="pipe-node-label">Agent 2: Anomaly Delta</div>
+          <div class="pipe-node-sub">Supabase Master Registry Lookup</div>
+          <div class="pipe-node-stat" id="pStat3">Standby</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node" id="pNode4">
+          <div class="pipe-node-icon">🧠</div>
+          <div class="pipe-node-label">Agent 3: Forensic Scorer</div>
+          <div class="pipe-node-sub">Risk Scoring & BEC Synthesis</div>
+          <div class="pipe-node-stat" id="pStat4">Standby</div>
+        </div>
+        <div class="pipe-arrow">→</div>
+        <div class="pipe-node" id="pNode5">
+          <div class="pipe-node-icon">🚦</div>
+          <div class="pipe-node-label">Sentinel Gate</div>
+          <div class="pipe-node-sub">ERP Auto-Release vs HITL Hold</div>
+          <div class="pipe-node-stat" id="pStat5">Active</div>
+        </div>
+      </div>
+      <div class="trace-log" id="traceLog">
+        <div class="trace-entry trace-info">Sentinel Engine ready — all live audits stream through this multi-agent data lane.</div>
+      </div>
+    </div>
+
+  </section>
+
+
+  <!-- ════════════════════════ TAB 2: VENDOR REGISTRY (SUPABASE) ════════════════════════ -->
+  <section class="tab-pane" id="tab-vendors">
+    <div class="vendor-header-bar">
+      <div>
+        <h1 class="dash-heading">🏢 Supabase Vendor Master Registry</h1>
+        <p class="dash-sub">Authoritative database of verified vendors, trusted banking details, and out-of-band contacts.</p>
+      </div>
+      <div class="vendor-header-actions">
+        <div class="search-input-wrap">
+          <input type="text" class="input-search" id="vendorSearchInput" placeholder="Search vendors by name, domain, bank account..." />
+        </div>
+        <button class="btn btn-primary" id="addVendorBtn">+ Add New Vendor</button>
+      </div>
+    </div>
+
+    <!-- Vendor Registry Stats -->
+    <div class="vendor-stat-row">
+      <div class="vstat-card">
+        <div class="vstat-num" id="statVendorTotal">0</div>
+        <div class="vstat-lbl">Registered Vendors</div>
+      </div>
+      <div class="vstat-card">
+        <div class="vstat-num text-green" id="statVendorActive">0</div>
+        <div class="vstat-lbl">Active & Verified</div>
+      </div>
+      <div class="vstat-card">
+        <div class="vstat-num text-orange" id="statVendorReview">0</div>
+        <div class="vstat-lbl">Under Review</div>
+      </div>
+      <div class="vstat-card">
+        <div class="vstat-num text-red" id="statVendorBlacklisted">0</div>
+        <div class="vstat-lbl">Blacklisted / Fraud Flagged</div>
+      </div>
+    </div>
+
+    <!-- Vendors Table -->
+    <div class="card vendor-table-card">
+      <div class="table-wrap">
+        <table class="results-table" id="vendorsTable">
+          <thead>
+            <tr>
+              <th>Vendor ID</th>
+              <th>Vendor Name & Category</th>
+              <th>Primary Domain & Aliases</th>
+              <th>Verified Bank Details</th>
+              <th>Out-of-Band Verified Phone</th>
+              <th>Avg Spend</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="vendorsBody">
+            <tr class="empty-row">
+              <td colspan="8">Loading vendors from Supabase...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ════════════════════════ TAB 3: AUDIT SINGLE INVOICE ════════════════════════ -->
+  <section class="tab-pane" id="tab-audit-single">
+    <div class="single-audit-layout">
+      <!-- Left: Audit Input Form -->
+      <div class="card audit-form-card">
+        <div class="card-header">
+          <h2 class="card-title">📝 Real-Time Single Invoice Fraud Audit</h2>
+          <span class="badge badge-purple">Instant Multi-Agent AI</span>
+        </div>
+        <p class="form-helper">Enter invoice fields to cross-reference against your Supabase Vendor Master and calculate real-time BEC risk.</p>
+
+        <form id="singleInvoiceForm" class="audit-form">
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label class="form-label" for="sinv_vendor_name">Vendor Name *</label>
+              <input type="text" class="input-field" id="sinv_vendor_name" placeholder="e.g. Cloudflare Global Services" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sinv_domain">Sender Email Domain *</label>
+              <input type="text" class="input-field" id="sinv_domain" placeholder="e.g. cloudflare.com (or spoofed domain)" required />
+            </div>
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label class="form-label" for="sinv_id">Invoice Number *</label>
+              <input type="text" class="input-field" id="sinv_id" placeholder="e.g. INV-2026-8801" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sinv_amount">Invoice Amount (USD) *</label>
+              <input type="number" step="0.01" class="input-field" id="sinv_amount" placeholder="e.g. 45000.00" required />
+            </div>
+          </div>
+
+          <div class="form-grid-2">
+            <div class="form-group">
+              <label class="form-label" for="sinv_bank">Bank Account Number *</label>
+              <input type="text" class="input-field" id="sinv_bank" placeholder="e.g. 987654321098" required />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sinv_routing">Routing Number / SWIFT *</label>
+              <input type="text" class="input-field" id="sinv_routing" placeholder="e.g. 021000021" required />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Urgency & Social Engineering Triggers (Optional)</label>
+            <div class="checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" id="sinv_urgency" />
+                <span>Urgency language detected ("Wire today", "Confidential", "ASAP")</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="sinv_bank_change" />
+                <span>Vendor requested bank account change in email/memo</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="sinv_exec_override" />
+                <span>Executive bypass / CEO authorization claimed</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="sinv_notes">Invoice Notes / Body Text</label>
+            <textarea class="textarea-field" id="sinv_notes" rows="3" placeholder="Paste excerpt from invoice email or special payment instructions..."></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-lg" id="runSingleAuditBtn">
+              🔍 Run Forensic Fraud Audit
+            </button>
+            <button type="button" class="btn btn-ghost" id="fillSampleFraudBtn">
+              ⚡ Pre-fill Spoofed BEC Example
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Right: Audit Result Visual Card -->
+      <div class="card audit-result-card" id="singleResultCard">
+        <div class="card-header">
+          <h2 class="card-title">🔍 Forensic Audit Verdict</h2>
+          <span class="badge" id="singleResultStatusBadge">Awaiting Input</span>
+        </div>
+
+        <div class="result-placeholder" id="singleResultPlaceholder">
+          <div class="placeholder-icon">🛡️</div>
+          <h3>No Audit Run Yet</h3>
+          <p>Fill out the invoice form on the left and click "Run Forensic Fraud Audit" to analyze risk against your Supabase vendor database.</p>
+        </div>
+
+        <div class="result-content" id="singleResultContent" style="display:none">
+          <!-- Risk Score & Tier Header -->
+          <div class="verdict-banner" id="verdictBanner">
+            <div class="verdict-tier-badge" id="verdictTierBadge">HOLD</div>
+            <div class="verdict-score-wrap">
+              <div class="verdict-score-num" id="verdictScoreNum">0.95</div>
+              <div class="verdict-score-lbl">Risk Score (0.00 - 1.00)</div>
+            </div>
+          </div>
+
+          <!-- Quick Metrics -->
+          <div class="verdict-metrics-grid">
+            <div class="vmetric-box">
+              <div class="vmetric-lbl">Fraud Type</div>
+              <div class="vmetric-val" id="verdictFraudType">BEC</div>
+            </div>
+            <div class="vmetric-box">
+              <div class="vmetric-lbl">Confidence</div>
+              <div class="vmetric-val" id="verdictConfidence">95%</div>
+            </div>
+            <div class="vmetric-box">
+              <div class="vmetric-lbl">Recommendation</div>
+              <div class="vmetric-val" id="verdictRecommendation">PAYMENT_HOLD</div>
+            </div>
+            <div class="vmetric-box">
+              <div class="vmetric-lbl">Latency</div>
+              <div class="vmetric-val" id="verdictLatency">420ms</div>
+            </div>
+          </div>
+
+          <!-- Audit Summary -->
+          <div class="verdict-section">
+            <h4 class="verdict-sec-title">📋 Forensic Summary</h4>
+            <p class="verdict-summary-text" id="verdictSummaryText"></p>
+          </div>
+
+          <!-- Risk Factors -->
+          <div class="verdict-section">
+            <h4 class="verdict-sec-title">⚠️ Identified Anomalies & Risk Signals</h4>
+            <ul class="risk-factors-list" id="verdictRiskFactorsList"></ul>
+          </div>
+
+          <!-- Out of band action -->
+          <div class="verdict-section hitl-callout" id="verdictOobWrap" style="display:none">
+            <h4 class="verdict-sec-title text-red">📞 Mandatory Out-of-Band Action</h4>
+            <p class="oob-text" id="verdictOobText"></p>
+            <div class="verified-phone-box" id="verdictPhoneBox"></div>
+          </div>
+
+          <!-- Action buttons -->
+          <div class="verdict-actions" id="verdictActions">
+            <button class="btn btn-danger" id="verdictRejectBtn">🚫 Reject & Blacklist</button>
+            <button class="btn btn-success" id="verdictReleaseBtn">✅ Approve & Route to ERP</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ════════════════════════ TAB 4: BATCH UPLOAD ════════════════════════ -->
+  <section class="tab-pane" id="tab-batch">
+    <div class="batch-upload-layout">
+      <div class="card upload-card">
+        <div class="upload-zone" id="dropzone">
+          <div class="upload-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+              <path d="M24 4L36 16H28V32H20V16H12L24 4Z" fill="url(#upgrad)" opacity="0.9"/>
+              <rect x="8" y="36" width="32" height="4" rx="2" fill="url(#upgrad)" opacity="0.4"/>
+              <defs>
+                <linearGradient id="upgrad" x1="12" y1="4" x2="36" y2="40">
+                  <stop offset="0%" stop-color="#818cf8"/>
+                  <stop offset="100%" stop-color="#c084fc"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <div class="upload-text">Upload Custom Invoice Batch (JSON)</div>
+          <div class="upload-sub">Drag and drop your JSON invoice array or click Browse</div>
+          <input type="file" id="fileInput" accept=".json" hidden />
+          <div class="upload-actions">
+            <button class="btn btn-primary" id="browseBtn">Browse JSON File</button>
+            <button class="btn btn-ghost" id="demoTemplateBtn">⬇ Download Batch Template</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card batch-info-card">
+        <div class="card-header">
+          <h2 class="card-title">ℹ️ Supported Batch Format</h2>
+        </div>
+        <p>Your JSON batch should contain an array of invoice objects. Each invoice will be evaluated against your Supabase Vendor Master registry:</p>
+        <pre class="code-block"><code>[
+  {
+    "invoice_id": "INV-2026-001",
+    "vendor_name": "Cloudflare Global Services",
+    "sender_domain": "cloudflare.com",
+    "invoice_amount": 12500.00,
+    "bank_account_number": "987654321098",
+    "routing_number": "021000021",
+    "urgency_language_detected": false
+  }
+]</code></pre>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ════════════════════════ TAB 5: HITL RESOLUTION DESK ════════════════════════ -->
+  <section class="tab-pane" id="tab-hitl">
+    <div class="hitl-header-bar">
+      <div>
+        <h1 class="dash-heading">🛡️ HITL Payment Hold Desk</h1>
+        <p class="dash-sub">Frozen payments flagged for BEC, typosquats, or unauthorized banking changes. Human approval mandatory.</p>
+      </div>
+      <div class="hitl-count-badge" id="hitlDeskCount">0 Pending Holds</div>
+    </div>
+
+    <div class="hitl-cards-grid" id="hitlCards">
+      <div class="empty-hitl-box">
+        <div class="empty-icon">✅</div>
+        <h3>No Pending Payment Holds</h3>
+        <p>All audited invoices are clear or have already been resolved by an analyst.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+
+<!-- ═══════════════════════════ MODALS ═══════════════════════════ -->
+
+<!-- 1. SUPABASE AUTH MODAL (Sign In / Sign Up) -->
+<div class="modal-overlay" id="authModal" style="display:none">
+  <div class="modal auth-modal">
+    <div class="modal-header">
+      <div class="modal-title">🔐 Supabase Authentication</div>
+      <button class="modal-close" id="authModalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="authTabSignIn">Sign In</button>
+        <button class="auth-tab" id="authTabSignUp">Create Account</button>
+      </div>
+
+      <form id="authForm" class="auth-form">
+        <div class="form-group">
+          <label class="form-label" for="authEmail">Work Email</label>
+          <input type="email" class="input-field" id="authEmail" placeholder="analyst@yourcompany.com" required />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="authPassword">Password</label>
+          <input type="password" class="input-field" id="authPassword" placeholder="••••••••••••" required />
+        </div>
+        <div class="auth-error-msg" id="authErrorMsg" style="display:none"></div>
+        <button type="submit" class="btn btn-primary btn-full" id="authSubmitBtn">Sign In with Supabase</button>
+      </form>
+
+      <div class="auth-footer-note">
+        <span>Powered by Supabase Auth (JWT & Row-Level Security)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 2. ADD / EDIT VENDOR MODAL -->
+<div class="modal-overlay" id="vendorModal" style="display:none">
+  <div class="modal vendor-modal">
+    <div class="modal-header">
+      <div class="modal-title" id="vendorModalTitle">🏢 Register New Vendor (Supabase)</div>
+      <button class="modal-close" id="vendorModalClose">✕</button>
+    </div>
+    <form id="vendorForm">
+      <div class="modal-body">
+        <input type="hidden" id="vm_vendor_id" />
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="vm_name">Vendor Legal Name *</label>
+            <input type="text" class="input-field" id="vm_name" placeholder="e.g. Stripe Inc." required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="vm_domain">Primary Business Domain *</label>
+            <input type="text" class="input-field" id="vm_domain" placeholder="e.g. stripe.com" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="vm_aliases">Known / Secondary Domains (comma-separated)</label>
+          <input type="text" class="input-field" id="vm_aliases" placeholder="e.g. billing.stripe.com, payouts.stripe.com" />
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="vm_bank">Verified Bank Account Number *</label>
+            <input type="text" class="input-field" id="vm_bank" placeholder="e.g. 112233445566" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="vm_routing">Routing Number / SWIFT *</label>
+            <input type="text" class="input-field" id="vm_routing" placeholder="e.g. 021000021" required />
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="vm_phone">Verified Vendor Phone (For Out-of-Band Callback) *</label>
+            <input type="text" class="input-field" id="vm_phone" placeholder="e.g. +1 (800) 555-0199" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="vm_email">Verified AP Contact Email</label>
+            <input type="email" class="input-field" id="vm_email" placeholder="e.g. billing@stripe.com" />
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="vm_avg_amount">Average Monthly Spend ($)</label>
+            <input type="number" step="0.01" class="input-field" id="vm_avg_amount" placeholder="e.g. 15000.00" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="vm_category">Vendor Category</label>
+            <select class="input-field" id="vm_category">
+              <option value="Cloud / SaaS">Cloud / SaaS</option>
+              <option value="Logistics & Freight">Logistics & Freight</option>
+              <option value="Professional Services">Professional Services</option>
+              <option value="Hardware / IT">Hardware / IT</option>
+              <option value="Marketing & Advertising">Marketing & Advertising</option>
+              <option value="General Vendor">General Vendor</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="vm_status">Verification Status</label>
+            <select class="input-field" id="vm_status">
+              <option value="ACTIVE">✅ ACTIVE (Verified Master)</option>
+              <option value="UNDER_REVIEW">⚠️ UNDER_REVIEW</option>
+              <option value="BLACKLISTED">🚫 BLACKLISTED (Known Fraud)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="vm_notes">Security Notes</label>
+            <input type="text" class="input-field" id="vm_notes" placeholder="e.g. Requires 2-person verbal sign-off for bank changes." />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" id="vendorModalCancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="vendorModalSave">💾 Save to Supabase Registry</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+<!-- 3. SETTINGS & SUPABASE / ROCKETRIDE CONFIG MODAL -->
+<div class="modal-overlay" id="settingsModal" style="display:none">
+  <div class="modal settings-modal">
+    <div class="modal-header">
+      <div class="modal-title">⚙️ Engine & Database Configuration</div>
+      <button class="modal-close" id="settingsModalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- RocketRide Connection Section -->
+      <div class="settings-section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+          <h3 class="settings-title" style="margin-bottom:0;">🚀 RocketRide Pipeline Engine</h3>
+          <span class="badge" id="cfgRocketRideBadge">Checking...</span>
+        </div>
+        <p class="settings-sub">Connect to local RocketRide daemon (`ws://localhost:5565`) or RocketRide Cloud (`wss://cloud.rocketride.ai/...`).</p>
+        
+        <form id="rocketrideConfigForm" style="margin-bottom:1rem;">
+          <div class="form-group">
+            <label class="form-label" for="cfg_rocketride_uri">RocketRide Server URI</label>
+            <input type="text" class="input-field font-mono" id="cfg_rocketride_uri" placeholder="ws://localhost:5565 or wss://cloud.rocketride.ai/team-endpoint" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfg_rocketride_key">RocketRide API Key / Auth Token</label>
+            <input type="password" class="input-field font-mono" id="cfg_rocketride_key" placeholder="local or your cloud api key" />
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" id="rocketrideReconnectBtn">🔄 Test & Reconnect RocketRide</button>
+        </form>
+
+        <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.2); border-radius:6px; padding:0.75rem; font-size:0.78rem; line-height:1.4; color:var(--text-secondary);">
+          <div style="font-weight:700; color:#a5b4fc; margin-bottom:0.25rem;">💡 How to connect RocketRide:</div>
+          <div><strong>1. Local Mode (VS Code Extension):</strong> Open VS Code &rarr; Click the RocketRide icon on the sidebar &rarr; Click <em>"Connect Local"</em> (daemon starts on <code>ws://localhost:5565</code>). Then click <em>"Test & Reconnect"</em> above.</div>
+          <div style="margin-top:0.25rem;"><strong>2. Cloud Mode (Online Engine):</strong> Log in to <a href="https://cloud.rocketride.ai" target="_blank" style="color:#93c5fd;">cloud.rocketride.ai</a> (promo code <code>INDIAHACK1</code>) &rarr; Copy your WebSocket endpoint & API key into the fields above.</div>
+        </div>
+      </div>
+
+      <!-- Supabase Section -->
+      <div class="settings-section">
+        <h3 class="settings-title">Supabase Database & Auth Configuration</h3>
+        <p class="settings-sub">Connect your Supabase project to persist vendors and audit logs in cloud PostgreSQL.</p>
+        
+        <form id="supabaseConfigForm">
+          <div class="form-group">
+            <label class="form-label" for="cfg_supabase_url">Supabase Project URL</label>
+            <input type="text" class="input-field font-mono" id="cfg_supabase_url" placeholder="https://your-project.supabase.co" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cfg_supabase_anon_key">Supabase Anon / Public API Key</label>
+            <input type="password" class="input-field font-mono" id="cfg_supabase_anon_key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." />
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm">💾 Update Supabase Config</button>
+        </form>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-title">Supabase SQL Schema Helper</h3>
+        <p class="settings-sub">Run this SQL in your Supabase SQL Editor to create the `vendors` and `audit_logs` tables:</p>
+        <button class="btn btn-outline btn-sm" id="copySqlBtn">📋 Copy Supabase SQL Schema</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- 4. HITL RESOLUTION ACTION MODAL -->
+<div class="modal-overlay" id="hitlActionModal" style="display:none">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="hitlModalTitle">🔴 Payment Hold Resolution</div>
+      <button class="modal-close" id="hitlModalClose">✕</button>
+    </div>
+    <div class="modal-body" id="hitlModalBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="modalReject">🚫 Reject & Blacklist Vendor</button>
+      <button class="btn btn-success" id="modalRelease">✅ Release Payment to ERP</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST NOTIFICATION CONTAINER -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
