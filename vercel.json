@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
+    },
+    {
+      "src": "frontend/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "dest": "/frontend/$1"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/admin",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/",
+      "dest": "/api/index.py"
+    }
+  ],
+  "env": {
+    "GROQ_MODEL": "llama-3.1-8b-instant",
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    "GROQ_BASE_URL": "https://api.groq.com/openai/v1",
+    "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "SENTINEL_ADMIN_EMAIL": "admin@sentinel.finance",
+    "PORT": "8000",
+    "HOST": "0.0.0.0",
+    "IMAP_PORT": "993",
+    "IMAP_POLL_INTERVAL_SEC": "120",
+    "SMTP_PORT": "587"
+  }
+}
