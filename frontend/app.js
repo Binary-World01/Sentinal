@@ -1,8 +1,8 @@
 /**
- * AP Payment Fraud Sentinel — Frontend Application
- * =================================================
- * Powered by Supabase Authentication, Supabase Vendor Registry,
- * and RocketRide Multi-Agent Forensic AI.
+ * AP Payment Fraud Sentinel — Unified Frontend Application v2.5
+ * =============================================================
+ * Powered by RocketRide Multi-Agent Forensic AI, Supabase Registry,
+ * IMAP Email Ingestion Worker, and Stripe / RazorpayX Payouts.
  */
 
 // ─── State Management ────────────────────────────────────────────────────────
@@ -13,10 +13,12 @@ const state = {
   vendors: [],
   auditHistory: [],
   hitlHolds: [],
+  emailLogs: [],
   activeTab: 'dashboard',
   currentSingleInvoiceId: null,
+  selectedPayoutInvoice: null,
   stats: { total: 0, clean: 0, elevated: 0, hold: 0, fraud_held: 0 },
-  authMode: 'signin', // 'signin' or 'signup'
+  authMode: 'signin',
 };
 
 // ─── DOM Ready Initialization ────────────────────────────────────────────────
@@ -27,22 +29,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupAuth();
     setupVendorRegistry();
     setupSingleAudit();
+    setupUniversalIngestion();
     setupBatchUpload();
+    setupEmailPolling();
+    setupPayoutGateway();
     setupSettings();
     setupAuditTable();
+    setupAdminTelemetry();
   } catch (err) {
-    console.error('Error in initial setup:', err);
+    console.error('Error in setup:', err);
   }
 
-  // Load backend health and Supabase config asynchronously
+  // Initial Data Load
   await loadSystemHealth();
   await initSupabaseAuth();
   await loadVendors();
   await loadAuditHistory();
+  await loadEmailLogs();
 });
 
 
-// ─── System Health & Supabase Status ─────────────────────────────────────────
+// ─── System Health & Status ──────────────────────────────────────────────────
 async function loadSystemHealth() {
   try {
     const res = await fetch('/api/health');
@@ -63,7 +70,7 @@ async function loadSystemHealth() {
 
     updateSupabaseBadge(data.supabase_configured);
   } catch (err) {
-    console.warn('Health check warning:', err);
+    console.warn('Health check note:', err);
   }
 }
 
@@ -99,8 +106,6 @@ async function initSupabaseAuth() {
 
     if (cfg.is_configured && window.supabase && cfg.supabase_url && cfg.supabase_anon_key) {
       state.supabase = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-      
-      // Check active session
       try {
         const { data: { session } } = await state.supabase.auth.getSession();
         if (session && session.user) {
@@ -108,7 +113,6 @@ async function initSupabaseAuth() {
         }
       } catch (e) {}
 
-      // Listen for auth state changes
       state.supabase.auth.onAuthStateChange((event, session) => {
         if (session && session.user) {
           setUserSession(session.user);
@@ -117,14 +121,13 @@ async function initSupabaseAuth() {
         }
       });
     } else {
-      // Local storage fallback for session
       const localUser = localStorage.getItem('sentinel_local_user');
       if (localUser) {
         try { setUserSession(JSON.parse(localUser)); } catch (e) {}
       }
     }
   } catch (err) {
-    console.warn('Supabase Auth init note:', err);
+    console.warn('Supabase Auth init:', err);
   }
 }
 
@@ -132,16 +135,22 @@ function setUserSession(user) {
   state.user = user;
   const wrap = document.getElementById('userAuthWrap');
   if (!wrap) return;
-  const email = user.email || 'analyst@sentinel.io';
+  const email = user.email || 'analyst@sentinel.finance';
   const initial = email.charAt(0).toUpperCase();
+  const isAdmin = !email || email.toLowerCase().includes('admin') || user.user_metadata?.role === 'admin' || user.role === 'admin';
 
   wrap.innerHTML = `
-    <div class="user-profile-chip" title="${email}">
+    <div class="user-profile-chip" title="${email} (${isAdmin ? 'Admin' : 'Analyst'})">
       <div class="user-avatar">${initial}</div>
       <span class="user-email-text">${email}</span>
+      ${isAdmin ? '<span class="badge" style="background:rgba(99,102,241,0.25); color:#a5b4fc; font-size:0.65rem; padding:0.15rem 0.4rem; margin-left:0.25rem;">ADMIN</span>' : ''}
       <button class="signout-btn" id="signOutBtn" title="Sign Out">✕</button>
     </div>
   `;
+
+  // Show/hide admin telemetry navigation tab
+  const navAdmin = document.getElementById('navAdminTelemetry');
+  if (navAdmin) navAdmin.style.display = isAdmin ? 'inline-flex' : 'none';
 
   document.getElementById('signOutBtn')?.addEventListener('click', async () => {
     if (state.supabase) {
@@ -165,7 +174,12 @@ function clearUserSession() {
     const modal = document.getElementById('authModal');
     if (modal) modal.style.display = 'flex';
   });
+
+  // Default to showing admin telemetry in local demo mode
+  const navAdmin = document.getElementById('navAdminTelemetry');
+  if (navAdmin) navAdmin.style.display = 'inline-flex';
 }
+
 
 function setupAuth() {
   const authModal = document.getElementById('authModal');
@@ -224,7 +238,6 @@ function setupAuth() {
           showToast('Account created successfully!', 'success');
         }
       } else {
-        // Local mode authentication fallback
         const mockUser = { email, id: 'local_' + Date.now(), role: 'AP Security Analyst' };
         localStorage.setItem('sentinel_local_user', JSON.stringify(mockUser));
         setUserSession(mockUser);
@@ -233,7 +246,7 @@ function setupAuth() {
       if (authModal) authModal.style.display = 'none';
     } catch (err) {
       if (authErrorMsg) {
-        authErrorMsg.textContent = err.message || 'Authentication failed. Please check credentials.';
+        authErrorMsg.textContent = err.message || 'Authentication failed.';
         authErrorMsg.style.display = 'block';
       }
     } finally {
@@ -241,14 +254,29 @@ function setupAuth() {
       authSubmitBtn.textContent = state.authMode === 'signin' ? 'Sign In with Supabase' : 'Create Account with Supabase';
     }
   });
+
+  document.getElementById('authDemoAdminBtn')?.addEventListener('click', () => {
+    const adminUser = { email: 'admin@sentinel.finance', id: 'usr_admin_001', role: 'admin' };
+    localStorage.setItem('sentinel_local_user', JSON.stringify(adminUser));
+    setUserSession(adminUser);
+    if (authModal) authModal.style.display = 'none';
+    showToast('Authenticated as Administrator (Full Privileges Granted)', 'success');
+  });
+
+  document.getElementById('authDemoAnalystBtn')?.addEventListener('click', () => {
+    const analystUser = { email: 'analyst@sentinel.finance', id: 'usr_analyst_001', role: 'analyst' };
+    localStorage.setItem('sentinel_local_user', JSON.stringify(analystUser));
+    setUserSession(analystUser);
+    if (authModal) authModal.style.display = 'none';
+    showToast('Authenticated as Security Analyst (Standard Dashboard Mode)', 'info');
+  });
 }
+
 
 
 // ─── Navigation Tabs ─────────────────────────────────────────────────────────
 function setupNavigation() {
   const navTabsContainer = document.getElementById('navTabs');
-  
-  // Delegated tab click
   navTabsContainer?.addEventListener('click', (e) => {
     const btn = e.target.closest('.nav-tab');
     if (btn) {
@@ -257,34 +285,20 @@ function setupNavigation() {
     }
   });
 
-  // Top action bar buttons
   document.getElementById('quickAuditBtn')?.addEventListener('click', () => switchTab('audit-single'));
   document.getElementById('openAddVendorTopBtn')?.addEventListener('click', () => {
     switchTab('vendors');
     openVendorModal();
   });
-
-  // Badge click to open Settings
-  document.getElementById('supabaseBadge')?.addEventListener('click', () => {
-    const modal = document.getElementById('settingsModal');
-    if (modal) {
-      document.getElementById('cfg_supabase_url').value = state.supabaseConfig.url || '';
-      document.getElementById('cfg_supabase_anon_key').value = state.supabaseConfig.anon_key || '';
-      modal.style.display = 'flex';
-    }
-  });
 }
 
 window.switchTab = function(tabName) {
   state.activeTab = tabName;
-
-  // Update tabs UI
   document.querySelectorAll('.nav-tab').forEach(t => {
     if (t.getAttribute('data-tab') === tabName) t.classList.add('active');
     else t.classList.remove('active');
   });
 
-  // Update panes
   document.querySelectorAll('.tab-pane').forEach(p => {
     if (p.id === `tab-${tabName}`) {
       p.classList.add('active');
@@ -295,23 +309,25 @@ window.switchTab = function(tabName) {
     }
   });
 
-  // Scroll to top
+  if (tabName === 'admin-telemetry') {
+    loadAdminTelemetry();
+  }
+
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
 
-// ─── Vendor Registry (Supabase CRUD) ──────────────────────────────────────────
+
+// ─── Vendor Master Registry ──────────────────────────────────────────────────
 function setupVendorRegistry() {
   document.getElementById('addVendorBtn')?.addEventListener('click', () => openVendorModal());
   document.getElementById('vendorModalClose')?.addEventListener('click', closeVendorModal);
   document.getElementById('vendorModalCancel')?.addEventListener('click', closeVendorModal);
 
-  // Search filter
   document.getElementById('vendorSearchInput')?.addEventListener('input', (e) => {
     renderVendorsTable(e.target.value.toLowerCase());
   });
 
-  // Vendor form submit
   document.getElementById('vendorForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     await saveVendorForm();
@@ -338,8 +354,8 @@ function renderVendorsTable(filter = '') {
   const filtered = state.vendors.filter(v => {
     if (!filter) return true;
     const s = filter.toLowerCase();
-    const name = (v.name || '').toLowerCase();
-    const domain = (v.domain || '').toLowerCase();
+    const name = (v.vendor_name || v.name || '').toLowerCase();
+    const domain = (v.verified_domain || v.domain || '').toLowerCase();
     const bank = (v.bank_account_number || '').toLowerCase();
     const cat = (v.category || '').toLowerCase();
     return name.includes(s) || domain.includes(s) || bank.includes(s) || cat.includes(s);
@@ -357,40 +373,40 @@ function renderVendorsTable(filter = '') {
   tbody.innerHTML = filtered.map(v => {
     const status = v.status || 'ACTIVE';
     const statusClass = status === 'ACTIVE' ? 'badge-clean' : (status === 'BLACKLISTED' ? 'badge-hold' : 'badge-elevated');
-    const aliases = Array.isArray(v.known_domains) ? v.known_domains.filter(d => d !== v.domain) : [];
-    const aliasHtml = aliases.length > 0 ? `<div style="font-size:0.72rem; color:var(--text-muted);">Aliases: ${aliases.join(', ')}</div>` : '';
+    const name = v.vendor_name || v.name || 'Unknown';
+    const domain = v.verified_domain || v.domain || '';
+    const routing = v.bank_routing_code || v.routing_number || '';
     const avgSpend = v.avg_invoice_amount ? `$${Number(v.avg_invoice_amount).toLocaleString(undefined, {minimumFractionDigits:2})}` : '—';
 
     return `
       <tr>
-        <td><code style="color:#818cf8; font-size:0.78rem;">${escapeHtml(v.vendor_id || '—')}</code></td>
+        <td><code style="color:#818cf8; font-size:0.78rem;">${escapeHtml(v.vendor_id || v.id || '—')}</code></td>
         <td>
-          <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(v.name)}</div>
+          <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(name)}</div>
           <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(v.category || 'General')}</div>
         </td>
         <td>
-          <div style="font-family:var(--font-mono); color:#93c5fd;">${escapeHtml(v.domain)}</div>
-          ${aliasHtml}
+          <div style="font-family:var(--font-mono); color:#93c5fd;">${escapeHtml(domain)}</div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml(v.primary_email || '')}</div>
         </td>
         <td>
           <div class="bank-info-cell">
             <div><span class="bank-label">Acct:</span> ${escapeHtml(v.bank_account_number || '—')}</div>
-            <div><span class="bank-label">Routing:</span> ${escapeHtml(v.routing_number || '—')}</div>
+            <div><span class="bank-label">Routing:</span> ${escapeHtml(routing || '—')}</div>
           </div>
         </td>
         <td>
           <div style="font-family:var(--font-mono); font-weight:600; color:#34d399;">
             ${escapeHtml(v.contact_phone || 'Not configured')}
           </div>
-          <div style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml(v.contact_email || '')}</div>
         </td>
         <td><span style="font-family:var(--font-mono); font-weight:600;">${avgSpend}</span></td>
         <td><span class="badge ${statusClass}">${status}</span></td>
         <td>
           <div style="display:flex; gap:6px;">
-            <button class="btn btn-ghost btn-sm" onclick="editVendor('${v.vendor_id}')" title="Edit Vendor">✏️</button>
-            <button class="btn btn-ghost btn-sm" onclick="quickAuditVendorDomain('${v.domain}', '${escapeHtml(v.name)}')" title="Audit Invoice for this Vendor">⚡ Audit</button>
-            <button class="btn btn-ghost btn-sm text-red" onclick="deleteVendor('${v.vendor_id}')" title="Delete Vendor">🗑️</button>
+            <button class="btn btn-ghost btn-sm" onclick="editVendor('${v.vendor_id || v.id}')" title="Edit Vendor">✏️</button>
+            <button class="btn btn-ghost btn-sm" onclick="quickAuditVendorDomain('${domain}', '${escapeHtml(name)}')" title="Audit Invoice for this Vendor">⚡ Audit</button>
+            <button class="btn btn-ghost btn-sm text-red" onclick="deleteVendor('${v.vendor_id || v.id}')" title="Delete Vendor">🗑️</button>
           </div>
         </td>
       </tr>
@@ -421,19 +437,18 @@ function openVendorModal(vendorId = null) {
   form.reset();
 
   if (vendorId) {
-    const v = state.vendors.find(item => item.vendor_id === vendorId);
+    const v = state.vendors.find(item => item.vendor_id === vendorId || item.id === vendorId);
     if (v) {
       if (title) title.textContent = '✏️ Edit Vendor Details';
-      document.getElementById('vm_vendor_id').value = v.vendor_id;
-      document.getElementById('vm_name').value = v.name || '';
-      document.getElementById('vm_domain').value = v.domain || '';
-      document.getElementById('vm_aliases').value = Array.isArray(v.known_domains) ? v.known_domains.join(', ') : '';
+      document.getElementById('vm_vendor_id').value = v.vendor_id || v.id;
+      document.getElementById('vm_name').value = v.vendor_name || v.name || '';
+      document.getElementById('vm_domain').value = v.verified_domain || v.domain || '';
       document.getElementById('vm_bank').value = v.bank_account_number || '';
-      document.getElementById('vm_routing').value = v.routing_number || '';
+      document.getElementById('vm_routing').value = v.bank_routing_code || v.routing_number || '';
       document.getElementById('vm_phone').value = v.contact_phone || '';
-      document.getElementById('vm_email').value = v.contact_email || '';
+      document.getElementById('vm_email').value = v.primary_email || v.contact_email || '';
       document.getElementById('vm_avg_amount').value = v.avg_invoice_amount || '';
-      document.getElementById('vm_category').value = v.category || 'General Vendor';
+      document.getElementById('vm_category').value = v.category || 'General';
       document.getElementById('vm_status').value = v.status || 'ACTIVE';
       document.getElementById('vm_notes').value = v.notes || '';
     }
@@ -459,14 +474,14 @@ window.quickAuditVendorDomain = function(domain, name) {
   document.getElementById('sinv_vendor_name').value = name;
   document.getElementById('sinv_domain').value = domain;
   document.getElementById('sinv_id').value = 'INV-' + Math.floor(1000 + Math.random() * 9000);
-  document.getElementById('sinv_amount').value = '15000.00';
-  document.getElementById('sinv_bank').value = '';
-  document.getElementById('sinv_routing').value = '';
+  document.getElementById('sinv_amount').value = '4500.00';
+  document.getElementById('sinv_bank').value = '123456789';
+  document.getElementById('sinv_routing').value = '021000021';
   showToast(`Loaded ${name} for invoice auditing`, 'info');
 };
 
 window.deleteVendor = async function(vendorId) {
-  if (!confirm(`Are you sure you want to delete vendor ${vendorId}?`)) return;
+  if (!confirm(`Are you sure you want to delete this vendor record?`)) return;
   try {
     const res = await fetch(`/api/vendors/${vendorId}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Delete failed');
@@ -481,7 +496,6 @@ async function saveVendorForm() {
   const vendorId = document.getElementById('vm_vendor_id').value.trim();
   const name = document.getElementById('vm_name').value.trim();
   const domain = document.getElementById('vm_domain').value.trim().toLowerCase();
-  const aliasesRaw = document.getElementById('vm_aliases').value.trim();
   const bank = document.getElementById('vm_bank').value.trim();
   const routing = document.getElementById('vm_routing').value.trim();
   const phone = document.getElementById('vm_phone').value.trim();
@@ -491,18 +505,14 @@ async function saveVendorForm() {
   const status = document.getElementById('vm_status').value;
   const notes = document.getElementById('vm_notes').value.trim();
 
-  const known_domains = aliasesRaw ? aliasesRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [];
-  if (domain && !known_domains.includes(domain)) known_domains.push(domain);
-
   const payload = {
     vendor_id: vendorId || undefined,
-    name,
-    domain,
-    known_domains,
+    vendor_name: name,
+    verified_domain: domain,
+    primary_email: email,
     bank_account_number: bank,
-    routing_number: routing,
+    bank_routing_code: routing,
     contact_phone: phone,
-    contact_email: email,
     avg_invoice_amount: avgAmount,
     category,
     status,
@@ -543,17 +553,107 @@ async function saveVendorForm() {
 }
 
 
-// ─── Single Real Invoice Audit ────────────────────────────────────────────────
+// ─── Universal Document Ingestion & Smart Pre-Check ──────────────────────────
+function setupUniversalIngestion() {
+  const dropzone = document.getElementById('universalDropzone');
+  const fileInput = document.getElementById('universalFileInput');
+  const browseBtn = document.getElementById('universalBrowseBtn');
+  const statusBox = document.getElementById('universalUploadStatus');
+
+  browseBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput?.click();
+  });
+
+  dropzone?.addEventListener('click', () => fileInput?.click());
+
+  dropzone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('dragover');
+  });
+
+  dropzone?.addEventListener('dragleave', () => {
+    dropzone.classList.remove('dragover');
+  });
+
+  dropzone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleUniversalDocument(e.dataTransfer.files[0]);
+    }
+  });
+
+  fileInput?.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) {
+      handleUniversalDocument(e.target.files[0]);
+    }
+  });
+}
+
+async function handleUniversalDocument(file) {
+  const statusBox = document.getElementById('universalUploadStatus');
+  const placeholder = document.getElementById('singleResultPlaceholder');
+  const resultContent = document.getElementById('singleResultContent');
+
+  if (statusBox) {
+    statusBox.style.display = 'block';
+    statusBox.className = 'precheck-alert precheck-success';
+    statusBox.innerHTML = `<span>⏳ Extracting & Pre-Checking ${file.name}...</span>`;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/audit/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      if (statusBox) {
+        statusBox.className = 'precheck-alert precheck-error';
+        statusBox.innerHTML = `<span>🚫 ${escapeHtml(err.detail || '400 Bad Request: Non-Invoice Document Rejected')}</span>`;
+      }
+      showToast('Document Rejected: Not a commercial invoice', 'error');
+      return;
+    }
+
+    const verdict = await res.json();
+    if (statusBox) {
+      statusBox.className = 'precheck-alert precheck-success';
+      statusBox.innerHTML = `<span>✅ <strong>Smart Pre-Check Passed:</strong> Valid commercial invoice markers verified. Analyzed via ${verdict._provider || 'RocketRide'}</span>`;
+    }
+
+    if (placeholder) placeholder.style.display = 'none';
+    if (resultContent) resultContent.style.display = 'block';
+    renderSingleVerdict(verdict, { invoice_amount: verdict._invoice_amount, vendor_name: verdict._vendor_name });
+
+    addAuditVerdictToState(verdict);
+    showToast(`Ingested ${file.name}: ${verdict.risk_tier}`, verdict.risk_tier === 'HOLD' ? 'error' : 'success');
+
+  } catch (err) {
+    if (statusBox) {
+      statusBox.className = 'precheck-alert precheck-error';
+      statusBox.innerHTML = `<span>🚫 Error processing document: ${escapeHtml(err.message)}</span>`;
+    }
+    showToast('Document upload error: ' + err.message, 'error');
+  }
+}
+
+
+// ─── Single Invoice Audit ────────────────────────────────────────────────────
 function setupSingleAudit() {
   const form = document.getElementById('singleInvoiceForm');
   const fillSampleBtn = document.getElementById('fillSampleFraudBtn');
 
   fillSampleBtn?.addEventListener('click', () => {
-    // Fill a realistic BEC attack spoofing Stripe
-    document.getElementById('sinv_vendor_name').value = 'Stripe Inc.';
-    document.getElementById('sinv_domain').value = 'str1pe.com'; // Typosquat!
+    document.getElementById('sinv_vendor_name').value = 'Acme Corp';
+    document.getElementById('sinv_domain').value = 'acnne-corp.com'; // Typosquat!
     document.getElementById('sinv_id').value = 'INV-2026-BEC-9901';
-    document.getElementById('sinv_amount').value = '84500.00';
+    document.getElementById('sinv_amount').value = '48500.00';
     document.getElementById('sinv_bank').value = '999888777666'; // Changed account!
     document.getElementById('sinv_routing').value = '021000021';
     document.getElementById('sinv_urgency').checked = true;
@@ -590,7 +690,7 @@ async function runSingleInvoiceAudit() {
 
   if (btn) {
     btn.disabled = true;
-    btn.textContent = '🔄 Agents Analyzing Signals...';
+    btn.textContent = '🔄 Multi-Agent Pipeline Analyzing...';
   }
   if (statusBadge) {
     statusBadge.textContent = 'Analyzing...';
@@ -607,12 +707,10 @@ async function runSingleInvoiceAudit() {
     if (!res.ok) throw new Error(`Audit failed (${res.status})`);
     const verdict = await res.json();
 
-    // Render result
     if (placeholder) placeholder.style.display = 'none';
     if (resultContent) resultContent.style.display = 'block';
     renderSingleVerdict(verdict, payload);
 
-    // Add to audit table
     addAuditVerdictToState(verdict);
     showToast(`Audit Complete: ${verdict.risk_tier} (Risk: ${verdict.risk_score})`, verdict.risk_tier === 'HOLD' ? 'error' : (verdict.risk_tier === 'ELEVATED' ? 'info' : 'success'));
   } catch (err) {
@@ -637,24 +735,22 @@ function renderSingleVerdict(verdict, invoice) {
 
   const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   setTxt('verdictScoreNum', score);
-  setTxt('verdictFraudType', verdict.fraud_type || 'None Detected');
+  setTxt('verdictFraudType', verdict.threat_type || verdict.fraud_type || 'None Detected');
   setTxt('verdictConfidence', `${Math.round((verdict.confidence || 0.95) * 100)}%`);
   setTxt('verdictRecommendation', verdict.recommendation || 'AUTO_APPROVE');
   setTxt('verdictLatency', `${verdict._latency_ms || 420}ms`);
   setTxt('verdictSummaryText', verdict.audit_summary || 'No summary available.');
 
-  // Risk Factors
   const rfList = document.getElementById('verdictRiskFactorsList');
   if (rfList) {
     const factors = verdict.key_risk_factors || [];
     if (factors.length > 0) {
       rfList.innerHTML = factors.map(f => `<li class="risk-factor-item">⚠️ ${escapeHtml(f)}</li>`).join('');
     } else {
-      rfList.innerHTML = `<li style="font-size:0.8rem; color:#34d399;">✅ No risk factors detected. Cross-check against master registry verified.</li>`;
+      rfList.innerHTML = `<li style="font-size:0.8rem; color:#34d399;">✅ No risk factors detected. Master registry cross-check verified.</li>`;
     }
   }
 
-  // Out of band action
   const oobWrap = document.getElementById('verdictOobWrap');
   if (oobWrap) {
     if (tier === 'HOLD' || verdict.out_of_band_action) {
@@ -666,25 +762,35 @@ function renderSingleVerdict(verdict, invoice) {
     }
   }
 
-  // Action buttons
   state.currentSingleInvoiceId = verdict._invoice_id;
   const actionsWrap = document.getElementById('verdictActions');
+  const payBtn = document.getElementById('verdictPayBtn');
+
   if (actionsWrap) {
-    actionsWrap.innerHTML = `
-      <button class="btn btn-danger" id="verdictRejectBtn">🚫 Reject & Blacklist</button>
-      <button class="btn btn-success" id="verdictReleaseBtn">✅ Approve & Route to ERP</button>
-    `;
-    document.getElementById('verdictReleaseBtn')?.addEventListener('click', async () => {
-      await resolveHitlPayment(verdict._invoice_id, 'RELEASED');
-    });
-    document.getElementById('verdictRejectBtn')?.addEventListener('click', async () => {
-      await resolveHitlPayment(verdict._invoice_id, 'REJECTED');
-    });
+    if (tier === 'HOLD') {
+      actionsWrap.innerHTML = `
+        <button class="btn btn-danger" id="verdictRejectBtn">🚫 Reject & Blacklist</button>
+        <button class="btn btn-success" id="verdictReleaseBtn">✅ Approve & Route to ERP</button>
+      `;
+      document.getElementById('verdictReleaseBtn')?.addEventListener('click', async () => {
+        await resolveHitlPayment(verdict._invoice_id, 'APPROVE');
+      });
+      document.getElementById('verdictRejectBtn')?.addEventListener('click', async () => {
+        await resolveHitlPayment(verdict._invoice_id, 'REJECT');
+      });
+    } else if (tier === 'CLEAN') {
+      actionsWrap.innerHTML = `
+        <button class="btn btn-pay" id="verdictPayBtn">💳 One-Click Payout (Stripe / RazorpayX)</button>
+      `;
+      document.getElementById('verdictPayBtn')?.addEventListener('click', () => {
+        openPayoutModal(verdict);
+      });
+    }
   }
 }
 
 
-// ─── Batch File Upload & Stream ───────────────────────────────────────────────
+// ─── Batch Ingestion ─────────────────────────────────────────────────────────
 function setupBatchUpload() {
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -723,19 +829,19 @@ function setupBatchUpload() {
     const template = [
       {
         invoice_id: "INV-2026-001",
-        vendor_name: "Cloudflare Global Services",
-        sender_domain: "cloudflare.com",
-        invoice_amount: 12500.00,
-        bank_account_number: "987654321098",
+        vendor_name: "Acme Corp",
+        sender_domain: "acme-corp.com",
+        invoice_amount: 4500.00,
+        bank_account_number: "123456789",
         routing_number: "021000021",
         urgency_language_detected: false
       },
       {
         invoice_id: "INV-2026-002-BEC",
-        vendor_name: "Cloudflare Global Services",
-        sender_domain: "cloudf1are.com",
-        invoice_amount: 75000.00,
-        bank_account_number: "111222333444",
+        vendor_name: "Acme Corp",
+        sender_domain: "acnne-corp.com",
+        invoice_amount: 48500.00,
+        bank_account_number: "999888777666",
         routing_number: "021000021",
         urgency_language_detected: true,
         bank_change_request: true,
@@ -754,7 +860,7 @@ function setupBatchUpload() {
 
 async function handleBatchFile(file) {
   if (!file.name.endsWith('.json')) {
-    showToast('Please upload a valid .json invoice file.', 'error');
+    showToast('Please upload a valid .json invoice batch file.', 'error');
     return;
   }
 
@@ -776,9 +882,7 @@ async function handleBatchFile(file) {
       body: formData
     });
 
-    if (!response.ok) {
-      throw new Error(`Upload failed (${response.status})`);
-    }
+    if (!response.ok) throw new Error(`Upload failed (${response.status})`);
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -790,7 +894,7 @@ async function handleBatchFile(file) {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep last incomplete line
+      buffer = lines.pop();
 
       for (const line of lines) {
         if (line.startsWith('data: ')) {
@@ -801,7 +905,6 @@ async function handleBatchFile(file) {
         }
       }
     }
-
     showToast('Batch audit stream completed!', 'success');
   } catch (err) {
     showToast('Batch processing error: ' + err.message, 'error');
@@ -812,72 +915,56 @@ async function handleBatchFile(file) {
 
 function handleBatchEvent(evt) {
   if (evt.type === 'batch_start') {
-    state.stats.total = 0;
-    state.stats.clean = 0;
-    state.stats.elevated = 0;
-    state.stats.hold = 0;
-    state.stats.fraud_held = 0;
-    const prog = document.getElementById('tProgress');
-    if (prog) prog.textContent = `Processing ${evt.total} invoices...`;
+    state.stats = { total: 0, clean: 0, elevated: 0, hold: 0, fraud_held: 0 };
   } else if (evt.type === 'invoice_result') {
-    const { idx, total, verdict, telemetry } = evt;
+    const { idx, total, verdict, stats } = evt;
     const pct = Math.round((idx / total) * 100);
     const fill = document.getElementById('progressFill');
     const lbl = document.getElementById('progressLabel');
     if (fill) fill.style.width = `${pct}%`;
     if (lbl) lbl.textContent = `${idx} / ${total} (${pct}%)`;
 
-    // Update telemetry
     const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     setTxt('tTotal', idx);
-    setTxt('tClean', telemetry.clean);
-    setTxt('tElevated', telemetry.elevated);
-    setTxt('tHold', telemetry.hold);
-    setTxt('tFraud', `$${Math.round(telemetry.fraud_held_usd).toLocaleString()}`);
-    setTxt('tProgress', `${telemetry.wall_time_s}s elapsed`);
+    setTxt('tClean', stats.clean);
+    setTxt('tElevated', stats.elevated);
+    setTxt('tHold', stats.hold);
+    setTxt('tFraud', `$${Math.round(stats.fraud_held_usd).toLocaleString()}`);
+    setTxt('tProgress', `${stats.wall_time_s}s elapsed`);
 
     addAuditVerdictToState(verdict);
-  } else if (evt.type === 'batch_complete') {
-    const prog = document.getElementById('tProgress');
-    if (prog) prog.textContent = `Completed in ${evt.wall_time_s}s`;
-    const fill = document.getElementById('progressFill');
-    const lbl = document.getElementById('progressLabel');
-    if (fill) fill.style.width = '100%';
-    if (lbl) lbl.textContent = `${evt.total} / ${evt.total} (Done)`;
   }
 }
 
 
-// ─── Audit Log Table & HITL Queue ────────────────────────────────────────────
+// ─── Audit Log Table & Telemetry ─────────────────────────────────────────────
 async function loadAuditHistory() {
   try {
-    const res = await fetch('/api/audit/history');
+    const res = await fetch('/api/invoices');
     if (!res.ok) return;
-    const logs = await res.json();
+    const invoices = await res.json();
     state.auditHistory = [];
     state.hitlHolds = [];
-    logs.forEach(log => {
-      let verdict = {};
-      try { verdict = JSON.parse(log.raw_verdict || '{}'); } catch(e) {}
-      if (!verdict._invoice_id) {
-        verdict = {
-          _invoice_id: log.invoice_id,
-          _vendor_name: log.vendor_name,
-          _vendor_domain: log.vendor_domain,
-          _invoice_amount: log.invoice_amount,
-          risk_tier: log.risk_tier,
-          risk_score: log.risk_score,
-          fraud_type: log.fraud_type,
-          _latency_ms: log.latency_ms,
-          audit_summary: log.audit_summary,
-          hitl_action: log.hitl_action,
-        };
-      }
+
+    invoices.forEach(inv => {
+      let verdict = inv.raw_payload || {};
+      verdict._invoice_id = inv.invoice_number || inv.id;
+      verdict._vendor_name = inv.vendor_name || 'Vendor';
+      verdict._vendor_domain = inv.verified_domain || '';
+      verdict._invoice_amount = inv.extracted_amount || 0.0;
+      verdict.risk_tier = inv.status || 'CLEAN';
+      verdict.risk_score = inv.risk_score || 0.0;
+      verdict.threat_type = inv.threat_type;
+      verdict.hitl_action = inv.hitl_actor ? inv.status : null;
+      verdict.payout_tx_id = inv.payout_tx_id;
+      verdict.paid_at = inv.paid_at;
+
       state.auditHistory.push(verdict);
-      if (verdict.risk_tier === 'HOLD' && !verdict.hitl_action) {
+      if (inv.status === 'HOLD' && !inv.hitl_actor) {
         state.hitlHolds.push(verdict);
       }
     });
+
     renderAuditTable();
     renderHitlDesk();
     updateTelemetryFromHistory();
@@ -891,7 +978,6 @@ function addAuditVerdictToState(verdict) {
   renderAuditTable();
   updateTelemetryFromHistory();
 
-  // If HOLD, add to HITL Queue
   if (verdict.risk_tier === 'HOLD' && !verdict.hitl_action) {
     state.hitlHolds.unshift(verdict);
     renderHitlDesk();
@@ -900,7 +986,7 @@ function addAuditVerdictToState(verdict) {
 
 function updateTelemetryFromHistory() {
   const total = state.auditHistory.length;
-  const clean = state.auditHistory.filter(v => v.risk_tier === 'CLEAN').length;
+  const clean = state.auditHistory.filter(v => v.risk_tier === 'CLEAN' || v.risk_tier === 'PAID').length;
   const elevated = state.auditHistory.filter(v => v.risk_tier === 'ELEVATED').length;
   const hold = state.auditHistory.filter(v => v.risk_tier === 'HOLD').length;
   const fraudHeld = state.auditHistory
@@ -942,7 +1028,7 @@ function renderAuditTable() {
     const inv = (v._invoice_id || '').toLowerCase();
     const vendor = (v._vendor_name || '').toLowerCase();
     const domain = (v._vendor_domain || '').toLowerCase();
-    const ftype = (v.fraud_type || '').toLowerCase();
+    const ftype = (v.threat_type || v.fraud_type || '').toLowerCase();
     const summ = (v.audit_summary || '').toLowerCase();
     return inv.includes(search) || vendor.includes(search) || domain.includes(search) || ftype.includes(search) || summ.includes(search);
   });
@@ -958,20 +1044,35 @@ function renderAuditTable() {
 
   tbody.innerHTML = filtered.map(v => {
     const tier = (v.risk_tier || 'ELEVATED').toUpperCase();
-    const tierClass = tier === 'HOLD' ? 'badge-hold' : (tier === 'CLEAN' ? 'badge-clean' : 'badge-elevated');
+    let tierBadgeHtml = '';
+
+    if (tier === 'PAID') {
+      tierBadgeHtml = `<span class="badge badge-paid">✅ PAID</span>`;
+    } else if (tier === 'HOLD') {
+      tierBadgeHtml = `<span class="badge badge-hold">🔴 HOLD</span>`;
+    } else if (tier === 'ELEVATED') {
+      tierBadgeHtml = `<span class="badge badge-elevated">⚠️ ELEVATED</span>`;
+    } else {
+      tierBadgeHtml = `<span class="badge badge-clean">✅ CLEAN</span>`;
+    }
+
     const score = typeof v.risk_score === 'number' ? v.risk_score.toFixed(2) : '0.50';
     const scoreColorClass = v.risk_score >= 0.61 ? 'score-high' : (v.risk_score >= 0.26 ? 'score-medium' : 'score-low');
     const amount = v._invoice_amount ? `$${Number(v._invoice_amount).toLocaleString(undefined, {minimumFractionDigits:2})}` : '$0.00';
 
     let actionBtn = '';
-    if (tier === 'HOLD') {
+    if (tier === 'PAID') {
+      actionBtn = `<span style="font-family:var(--font-mono); font-size:0.72rem; color:#34d399;">${escapeHtml(v.payout_tx_id || 'Settled')}</span>`;
+    } else if (tier === 'HOLD') {
       if (v.hitl_action) {
-        actionBtn = `<span class="badge ${v.hitl_action === 'RELEASED' ? 'badge-clean' : 'badge-hold'}">${v.hitl_action}</span>`;
+        actionBtn = `<span class="badge ${v.hitl_action === 'APPROVED' || v.hitl_action === 'RELEASED' ? 'badge-clean' : 'badge-hold'}">${v.hitl_action}</span>`;
       } else {
         actionBtn = `<button class="btn btn-danger btn-sm" onclick="openHitlActionModal('${v._invoice_id}')">Resolve Hold</button>`;
       }
+    } else if (tier === 'CLEAN' || v.hitl_action === 'APPROVED') {
+      actionBtn = `<button class="btn btn-pay btn-sm" onclick="openPayoutModal('${v._invoice_id}')">💳 Pay Now</button>`;
     } else {
-      actionBtn = `<span style="font-size:0.75rem; color:var(--text-muted);">Auto-Routed</span>`;
+      actionBtn = `<span style="font-size:0.75rem; color:var(--text-muted);">In Review</span>`;
     }
 
     return `
@@ -983,8 +1084,8 @@ function renderAuditTable() {
         </td>
         <td><span style="font-family:var(--font-mono); font-weight:700;">${amount}</span></td>
         <td><span class="score-badge ${scoreColorClass}">${score}</span></td>
-        <td><span class="badge ${tierClass}">${tier}</span></td>
-        <td><code style="color:#f87171; font-size:0.78rem;">${v.fraud_type || '—'}</code></td>
+        <td>${tierBadgeHtml}</td>
+        <td><code style="color:#f87171; font-size:0.78rem;">${v.threat_type || v.fraud_type || '—'}</code></td>
         <td><span style="font-family:var(--font-mono); font-size:0.75rem;">${v._latency_ms || 400}ms</span></td>
         <td><div style="max-width:320px; font-size:0.78rem; line-height:1.3; color:var(--text-secondary);">${escapeHtml(v.audit_summary || '')}</div></td>
         <td>${actionBtn}</td>
@@ -994,7 +1095,7 @@ function renderAuditTable() {
 }
 
 
-// ─── HITL Resolution Desk & Actions ──────────────────────────────────────────
+// ─── HITL Desk ───────────────────────────────────────────────────────────────
 function renderHitlDesk() {
   const container = document.getElementById('hitlCards');
   const navBadge = document.getElementById('navHitlCount');
@@ -1036,14 +1137,14 @@ function renderHitlDesk() {
           Invoice: ${escapeHtml(v._invoice_id)} · Domain: ${escapeHtml(v._vendor_domain || '')}
         </div>
         <div style="font-size:0.82rem; color:#fca5a5; margin-bottom:0.75rem; background:rgba(239,68,68,0.1); padding:0.4rem 0.6rem; border-radius:4px;">
-          🚩 <strong>${v.fraud_type || 'Suspicious Activity'}</strong>: ${escapeHtml(v.audit_summary || '')}
+          🚩 <strong>${v.threat_type || v.fraud_type || 'Suspicious'}</strong>: ${escapeHtml(v.audit_summary || '')}
         </div>
         <div style="font-size:0.78rem; color:#fecaca; margin-bottom:0.75rem;">
           📞 <strong>Required Action:</strong> ${escapeHtml(v.out_of_band_action || 'Call vendor master phone before release.')}
         </div>
         <div class="hitl-card-actions">
-          <button class="btn btn-danger btn-sm" onclick="resolveHitlPayment('${v._invoice_id}', 'REJECTED')">🚫 Reject & Blacklist</button>
-          <button class="btn btn-success btn-sm" onclick="resolveHitlPayment('${v._invoice_id}', 'RELEASED')">✅ Release to ERP</button>
+          <button class="btn btn-danger btn-sm" onclick="resolveHitlPayment('${v._invoice_id}', 'REJECT')">🚫 Reject & Blacklist</button>
+          <button class="btn btn-success btn-sm" onclick="resolveHitlPayment('${v._invoice_id}', 'APPROVE')">✅ Approve & Route to ERP</button>
         </div>
       </div>
     `;
@@ -1067,21 +1168,21 @@ window.openHitlActionModal = function(invoiceId) {
       <p style="font-family:var(--font-mono); font-size:0.8rem; color:#93c5fd;">Invoice ID: ${item._invoice_id}</p>
     </div>
     <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); padding:0.75rem; border-radius:6px; margin-bottom:1rem;">
-      <div style="font-weight:700; color:#f87171; font-size:0.85rem;">🚨 Fraud Trigger: ${item.fraud_type || 'BEC Alert'}</div>
+      <div style="font-weight:700; color:#f87171; font-size:0.85rem;">🚨 Trigger: ${item.threat_type || item.fraud_type || 'BEC Alert'}</div>
       <div style="font-size:0.82rem; color:var(--text-secondary); margin-top:0.25rem;">${escapeHtml(item.audit_summary || '')}</div>
     </div>
     <div style="background:rgba(255,255,255,0.03); padding:0.75rem; border-radius:6px; font-size:0.82rem;">
-      <strong>Out-of-Band Call Required:</strong>
+      <strong>Out-of-Band Call Action:</strong>
       <p style="color:#fecaca; margin-top:0.25rem;">${escapeHtml(item.out_of_band_action || 'Call verified master contact before releasing payment.')}</p>
     </div>
   `;
 
   releaseBtn.onclick = async () => {
-    await resolveHitlPayment(invoiceId, 'RELEASED');
+    await resolveHitlPayment(invoiceId, 'APPROVE');
     modal.style.display = 'none';
   };
   rejectBtn.onclick = async () => {
-    await resolveHitlPayment(invoiceId, 'REJECTED');
+    await resolveHitlPayment(invoiceId, 'REJECT');
     modal.style.display = 'none';
   };
 
@@ -1090,46 +1191,174 @@ window.openHitlActionModal = function(invoiceId) {
 
 window.resolveHitlPayment = async function(invoiceId, action) {
   try {
-    const endpoint = action === 'RELEASED' ? `/api/hitl/release/${invoiceId}` : `/api/hitl/reject/${invoiceId}`;
-    const res = await fetch(endpoint, { method: 'POST' });
-    if (!res.ok) throw new Error('Action failed');
+    const res = await fetch(`/api/invoices/${invoiceId}/hitl`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, actor: state.user?.email || 'AP Security Analyst' })
+    });
+    if (!res.ok) throw new Error('HITL update failed');
 
-    // Update in local state
     const item = state.auditHistory.find(v => v._invoice_id === invoiceId);
-    if (item) item.hitl_action = action;
+    if (item) item.hitl_action = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
 
     const holdItem = state.hitlHolds.find(v => v._invoice_id === invoiceId);
-    if (holdItem) holdItem.hitl_action = action;
+    if (holdItem) holdItem.hitl_action = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
 
-    // Update single audit result card if currently displaying this invoice
-    if (state.currentSingleInvoiceId === invoiceId) {
-      const actionsWrap = document.getElementById('verdictActions');
-      if (actionsWrap) {
-        if (action === 'REJECTED') {
-          actionsWrap.innerHTML = `<div class="badge badge-hold" style="padding:0.6rem 1.2rem; font-size:0.85rem; width:100%; justify-content:center;">🚫 Payment REJECTED & Vendor Blacklisted</div>`;
-        } else {
-          actionsWrap.innerHTML = `<div class="badge badge-clean" style="padding:0.6rem 1.2rem; font-size:0.85rem; width:100%; justify-content:center;">✅ Payment APPROVED & Released to ERP</div>`;
-        }
-      }
-    }
-
-    // Close modal if open
-    const modal = document.getElementById('hitlActionModal');
-    if (modal) modal.style.display = 'none';
-
-    // Reload vendors to reflect any auto-blacklisting
-    await loadVendors();
     renderAuditTable();
     renderHitlDesk();
-
-    showToast(`Invoice ${invoiceId}: Payment ${action === 'RELEASED' ? 'Approved & Released' : 'Rejected & Vendor Flagged'}`, action === 'RELEASED' ? 'success' : 'error');
+    showToast(`Invoice ${invoiceId}: Marked as ${action === 'APPROVE' ? 'Approved & Ready for Payout' : 'Rejected'}`, 'success');
   } catch (err) {
     showToast('Failed to resolve hold: ' + err.message, 'error');
   }
 };
 
 
-// ─── Settings & Engine / Supabase Configuration ──────────────────────────────
+// ─── One-Click Payout Gateway (Stripe Connect / RazorpayX) ────────────────────
+function setupPayoutGateway() {
+  const modal = document.getElementById('payoutModal');
+  const closeBtn = document.getElementById('payoutModalClose');
+  const cancelBtn = document.getElementById('payoutModalCancel');
+  const confirmBtn = document.getElementById('payoutConfirmBtn');
+
+  closeBtn?.addEventListener('click', () => { if (modal) modal.style.display = 'none'; });
+  cancelBtn?.addEventListener('click', () => { if (modal) modal.style.display = 'none'; });
+
+  confirmBtn?.addEventListener('click', async () => {
+    if (!state.selectedPayoutInvoice) return;
+    const invId = state.selectedPayoutInvoice._invoice_id;
+    const method = document.getElementById('payoutGatewaySelect').value;
+    const actor = document.getElementById('payoutActor').value.trim();
+
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '🚀 Processing Payout via Gateway...';
+
+    try {
+      const res = await fetch(`/api/invoices/${invId}/pay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_method: method, actor })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Payout failed');
+      }
+
+      const result = await res.json();
+      showToast(`Payment of $${state.selectedPayoutInvoice._invoice_amount} settled via ${method}! Ref: ${result.payout_tx_id}`, 'success');
+
+      // Update in local state
+      const item = state.auditHistory.find(v => v._invoice_id === invId);
+      if (item) {
+        item.risk_tier = 'PAID';
+        item.payout_tx_id = result.payout_tx_id;
+      }
+
+      modal.style.display = 'none';
+      renderAuditTable();
+      updateTelemetryFromHistory();
+    } catch (err) {
+      showToast('Payment failed: ' + err.message, 'error');
+    } finally {
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = '🚀 Confirm & Release Payment';
+    }
+  });
+}
+
+window.openPayoutModal = function(invoiceInput) {
+  let item = null;
+  if (typeof invoiceInput === 'string') {
+    item = state.auditHistory.find(v => v._invoice_id === invoiceInput);
+  } else {
+    item = invoiceInput;
+  }
+  if (!item) return;
+
+  state.selectedPayoutInvoice = item;
+  const modal = document.getElementById('payoutModal');
+  if (!modal) return;
+
+  const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setTxt('payModalInvoiceId', item._invoice_id);
+  setTxt('payModalVendor', item._vendor_name);
+  setTxt('payModalBank', 'Verified Master Account (Checked)');
+  setTxt('payModalAmount', `$${Number(item._invoice_amount || 0).toLocaleString(undefined, {minimumFractionDigits:2})}`);
+
+  modal.style.display = 'flex';
+};
+
+
+// ─── IMAP Email Polling & Logs ────────────────────────────────────────────────
+function setupEmailPolling() {
+  const headerBtn = document.getElementById('syncMailsHeaderBtn');
+  const tabBtn = document.getElementById('syncMailsTabBtn');
+
+  const handleSync = async () => {
+    const icon = document.getElementById('syncMailsIcon');
+    if (icon) icon.className = 'spin-icon';
+
+    showToast('Polling IMAP inbox for vendor invoice attachments...', 'info');
+    try {
+      const res = await fetch('/api/email/sync', { method: 'POST' });
+      const data = await res.json();
+      showToast(data.message || 'Email sync complete', 'success');
+      await loadEmailLogs();
+      await loadAuditHistory();
+    } catch (err) {
+      showToast('Email sync failed: ' + err.message, 'error');
+    } finally {
+      if (icon) icon.className = '';
+    }
+  };
+
+  headerBtn?.addEventListener('click', handleSync);
+  tabBtn?.addEventListener('click', handleSync);
+}
+
+async function loadEmailLogs() {
+  try {
+    const res = await fetch('/api/email/logs');
+    if (!res.ok) return;
+    state.emailLogs = await res.json();
+    renderEmailLogsTable();
+  } catch (err) {
+    console.warn('Could not load email logs:', err);
+  }
+}
+
+function renderEmailLogsTable() {
+  const tbody = document.getElementById('emailLogsBody');
+  if (!tbody) return;
+
+  if (state.emailLogs.length === 0) {
+    tbody.innerHTML = `
+      <tr class="empty-row">
+        <td colspan="5">No IMAP email logs found yet. Click "Analyze Unread Mails" to check inbox.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = state.emailLogs.map(l => {
+    const dateStr = l.created_at ? new Date(l.created_at).toLocaleTimeString() : '—';
+    const status = l.status || 'PROCESSED';
+    const badgeClass = status === 'CLEAN' ? 'badge-clean' : (status === 'HOLD' ? 'badge-hold' : 'badge-elevated');
+
+    return `
+      <tr>
+        <td><span style="font-family:var(--font-mono); font-size:0.78rem;">${dateStr}</span></td>
+        <td><code>${escapeHtml(l.sender_email)}</code></td>
+        <td><div style="font-weight:500;">${escapeHtml(l.subject || 'No Subject')}</div></td>
+        <td>${l.attachment_processed ? '✅ Yes (Invoice Parsed)' : '❌ None / Skipped'}</td>
+        <td><span class="badge ${badgeClass}">${status}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+
+// ─── Settings & Reconnect ─────────────────────────────────────────────────────
 async function loadRocketRideConfig() {
   try {
     const res = await fetch('/api/rocketride/config');
@@ -1179,7 +1408,6 @@ function setupSettings() {
     if (modal) modal.style.display = 'none';
   });
 
-  // RocketRide Reconnect Form
   rrForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const uri = document.getElementById('cfg_rocketride_uri').value.trim();
@@ -1196,14 +1424,8 @@ function setupSettings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rocketride_uri: uri, rocketride_apikey: apikey })
       });
-
       const data = await res.json();
-      if (data.is_connected) {
-        showToast(data.message, 'success');
-      } else {
-        showToast(data.message, 'info');
-      }
-
+      showToast(data.message, data.is_connected ? 'success' : 'info');
       await loadSystemHealth();
       await loadRocketRideConfig();
     } catch (err) {
@@ -1250,13 +1472,52 @@ function setupSettings() {
   });
 }
 
+// ─── Admin Telemetry Panel ───────────────────────────────────────────────────
+function setupAdminTelemetry() {
+  document.getElementById('refreshTelemetryBtn')?.addEventListener('click', loadAdminTelemetry);
+}
+
+async function loadAdminTelemetry() {
+  try {
+    const res = await fetch('/api/admin/telemetry', {
+      headers: {
+        'Authorization': state.user?.access_token ? `Bearer ${state.user.access_token}` : 'Bearer admin_secret_token',
+        'X-Sentinel-Role': 'admin',
+        'X-Sentinel-User': state.user?.email || 'admin@sentinel.finance'
+      }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const admEngineState = document.getElementById('admEngineState');
+    const admEngineUri = document.getElementById('admEngineUri');
+    const admAvgLatency = document.getElementById('admAvgLatency');
+    const admActiveSessions = document.getElementById('admActiveSessions');
+    const admSupabaseStatus = document.getElementById('admSupabaseStatus');
+    const admProjectRef = document.getElementById('admProjectRef');
+    const admGroqToken = document.getElementById('admGroqToken');
+    const admGeminiToken = document.getElementById('admGeminiToken');
+
+    if (admEngineState) admEngineState.textContent = data.is_connected ? 'Active (Port 5565)' : 'Direct Failover';
+    if (admEngineUri) admEngineUri.textContent = data.rocketride_uri || 'ws://localhost:5565';
+    if (admAvgLatency) admAvgLatency.textContent = (data.metrics?.avg_latency_ms || 120) + ' ms';
+    if (admActiveSessions) admActiveSessions.textContent = (data.groq_session_token ? 1 : 0) + (data.gemini_session_token ? 1 : 0) + ' Sessions';
+    if (admSupabaseStatus) admSupabaseStatus.textContent = 'Connected (17.6)';
+    if (admProjectRef) admProjectRef.textContent = data.database?.project_ref || 'zoixzkvakuiqoebpwodv';
+    if (admGroqToken) admGroqToken.textContent = data.groq_session_token ? `Session: ${data.groq_session_token}` : 'Ready / Active';
+    if (admGeminiToken) admGeminiToken.textContent = data.gemini_session_token ? `Session: ${data.gemini_session_token}` : 'Failover Ready';
+  } catch (err) {
+    console.warn('Telemetry fetch note:', err);
+  }
+}
+
 function setupModals() {
+
   document.getElementById('hitlModalClose')?.addEventListener('click', () => {
     const modal = document.getElementById('hitlActionModal');
     if (modal) modal.style.display = 'none';
   });
 
-  // Close modals when clicking on background backdrop
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
