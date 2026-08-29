@@ -4,6 +4,8 @@
 # Runtime pipe files (API keys injected — auto-generated at startup)
 ap_sentinel_runtime.pipe
 ap_sentinel_gemini_rt.pipe
+master_runtime.pipe
+master_gemini_rt.pipe
 
 # Python
 __pycache__/
@@ -18,11 +20,19 @@ venv/
 *.mov
 
 # Database (local instance)
+data/*.db
+data/*.db-journal
 data/audit.db
 
-# OS
+
+# OS & Logs
 .DS_Store
 Thumbs.db
+*.log
+*.tmp
+*.bak
+scratch/
+.system_generated/
 
 # IDE
 .vscode/settings.json
